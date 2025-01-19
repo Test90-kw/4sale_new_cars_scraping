@@ -98,9 +98,9 @@ class MainScraper:
     async def scrape_and_create_excel(self):
         # Setup Google Drive
         try:
-            credentials_json = os.environ.get('HIERARCHIAL_GCLOUD_KEY_JSON')
+            credentials_json = os.environ.get('NEW_CAR_GCLOUD_KEY_JSON')
             if not credentials_json:
-                raise EnvironmentError("HIERARCHIAL_GCLOUD_KEY_JSON environment variable not found")
+                raise EnvironmentError("NEW_CAR_GCLOUD_KEY_JSON environment variable not found")
             credentials_dict = json.loads(credentials_json)
             drive_saver = SavingOnDrive(credentials_dict)
             drive_saver.authenticate()
