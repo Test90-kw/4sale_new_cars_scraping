@@ -24,8 +24,6 @@ class MainScraper:
     async def process_brand_chunk(self, brand_chunk):
         """Process a chunk of brands and create their Excel files."""
         chunk_files = []
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        
         for brand_info in brand_chunk:
             brand_name = brand_info['brand'].replace(" ", "_")
             types = brand_info['types']
@@ -47,35 +45,17 @@ class MainScraper:
                         continue
                     
                     if car_details:
-                        # Filter for cars published yesterday
-                        filtered_details = [
-                            car for car in car_details 
-                            if car.get('date_published') == yesterday
-                        ]
-                        
-                        if filtered_details:  # Only create sheet if there's data from yesterday
-                            df = pd.DataFrame(filtered_details)
-                            df.to_excel(writer, sheet_name=type_name[:31], index=False)
-                            sheets_written = True
-                            print(f"Saved {len(filtered_details)} cars from {yesterday} for {type_name}")
-                        else:
-                            print(f"No cars from {yesterday} found for {type_name}")
+                        df = pd.DataFrame(car_details)
+                        df.to_excel(writer, sheet_name=type_name[:31], index=False)
+                        sheets_written = True
                 
                 if not sheets_written:
-                    pd.DataFrame([{'No Data': f'No car details available for {yesterday}'}]).to_excel(
+                    pd.DataFrame([{'No Data': 'No car details available'}]).to_excel(
                         writer, sheet_name="No_Data", index=False
                     )
             
-            # Only add to chunk_files if the file was actually created
-            if os.path.exists(excel_file_name) and os.path.getsize(excel_file_name) > 0:
-                chunk_files.append(excel_file_name)
-                print(f"Excel file created for {brand_name} with types from {yesterday}.")
-            else:
-                try:
-                    os.remove(excel_file_name)  # Remove empty file
-                    print(f"Removed empty file for {brand_name}")
-                except:
-                    pass
+            chunk_files.append(excel_file_name)
+            print(f"Excel file created for {brand_name} with types.")
         
         return chunk_files
 
@@ -98,9 +78,9 @@ class MainScraper:
     async def scrape_and_create_excel(self):
         # Setup Google Drive
         try:
-            credentials_json = os.environ.get('NEW_CAR_GCLOUD_KEY_JSON')
+            credentials_json = os.environ.get('HIERARCHIAL_GCLOUD_KEY_JSON')
             if not credentials_json:
-                raise EnvironmentError("NEW_CAR_GCLOUD_KEY_JSON environment variable not found")
+                raise EnvironmentError("HIERARCHIAL_GCLOUD_KEY_JSON environment variable not found")
             credentials_dict = json.loads(credentials_json)
             drive_saver = SavingOnDrive(credentials_dict)
             drive_saver.authenticate()
@@ -120,7 +100,7 @@ class MainScraper:
             # Create Excel files for the chunk
             chunk_files = await self.process_brand_chunk(chunk)
             
-            # Upload the chunk to Drive if there are files to upload
+            # Upload the chunk to Drive
             if chunk_files:
                 await self.upload_chunk_to_drive(chunk_files, drive_saver)
             
@@ -129,15 +109,15 @@ class MainScraper:
                 await asyncio.sleep(5)  # 5 seconds delay between chunks
 
         # Create master brand list
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        master_excel_name = f"master_brand_list_{yesterday}.xlsx"
+        master_excel_name = "master_brand_list.xlsx"
         brand_df = pd.DataFrame(self.brand_data)
         brand_df.to_excel(master_excel_name, sheet_name="Brands", index=False)
         
         # Upload master list
         drive_saver.save_files([master_excel_name])
         os.remove(master_excel_name)
-        print(f"Master brand list for {yesterday} uploaded to Drive.")
+        print(f"Master brand list uploaded to Drive.")
+
 
 if __name__ == "__main__":
     url = "https://www.q84sale.com/ar/automotive/new-cars-1"
