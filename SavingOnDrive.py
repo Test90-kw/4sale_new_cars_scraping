@@ -35,11 +35,9 @@ class SavingOnDrive:
         return file.get('id')
 
     def save_files(self, files):
-        parent_folder_id = '1ayaYWPFnswsOP2nRiDtiwGuy_r43Dr3F'  # ID of "Property Scraper Uploads"
-
+        parent_folder_id = '14ze0WPiqxGjNv4ekTxQnmVopSIuJIMym'  # Your specified parent folder ID
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         folder_id = self.create_folder(yesterday, parent_folder_id)
-
         for file_name in files:
             self.upload_file(file_name, folder_id)
         print(f"Files uploaded successfully to folder '{yesterday}' on Google Drive.")
