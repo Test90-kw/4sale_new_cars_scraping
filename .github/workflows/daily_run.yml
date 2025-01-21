@@ -2,7 +2,7 @@ name: Workflow
 
 on:
   schedule:
-    - cron: '15 0 * * *' # Runs every day
+    - cron: '0 10 1 * *' # Runs on the first day of every month at 10:00 AM
 
   workflow_dispatch:  # Allows manual triggering
   
