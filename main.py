@@ -27,40 +27,47 @@ class MainScraper:
         for brand_info in brand_chunk:
             brand_name = brand_info['brand'].replace(" ", "_")
             types = brand_info['types']
-            self.brand_data.append({'Brand': brand_name})
             
-            excel_file_name = f"{brand_name}.xlsx"
-            sheets_written = False
-            
-            with pd.ExcelWriter(excel_file_name) as writer:
-                for car_type in types:
-                    type_name = car_type['title'].replace(" ", "_")
-                    type_link = car_type['type_link']
-                    
-                    details_scraper = DetailsScraping(type_link)
-                    try:
-                        car_details = await details_scraper.get_car_details()
-                    except TimeoutError:
-                        print(f"Timeout error while scraping {type_name}. Skipping...")
-                        continue
-                    
-                    if car_details:
-                        df = pd.DataFrame(car_details)
-                        df.to_excel(writer, sheet_name=type_name[:31], index=False)
-                        sheets_written = True
+            # Collect all car details for this brand first
+            all_car_details = []
+            for car_type in types:
+                type_name = car_type['title'].replace(" ", "_")
+                type_link = car_type['type_link']
                 
-                if not sheets_written:
-                    pd.DataFrame([{'No Data': 'No car details available'}]).to_excel(
-                        writer, sheet_name="No_Data", index=False
-                    )
+                details_scraper = DetailsScraping(type_link)
+                try:
+                    car_details = await details_scraper.get_car_details()
+                    if car_details:
+                        all_car_details.append({
+                            'type_name': type_name,
+                            'details': car_details
+                        })
+                except TimeoutError:
+                    print(f"Timeout error while scraping {type_name}. Skipping...")
+                    continue
             
-            chunk_files.append(excel_file_name)
-            print(f"Excel file created for {brand_name} with types.")
+            # Only create Excel file if we have actual car details
+            if all_car_details:
+                self.brand_data.append({'Brand': brand_name})
+                excel_file_name = f"{brand_name}.xlsx"
+                
+                with pd.ExcelWriter(excel_file_name) as writer:
+                    for type_data in all_car_details:
+                        df = pd.DataFrame(type_data['details'])
+                        df.to_excel(writer, sheet_name=type_data['type_name'][:31], index=False)
+                
+                chunk_files.append(excel_file_name)
+                print(f"Excel file created for {brand_name} with types.")
+            else:
+                print(f"No car details found for {brand_name}. Skipping Excel file creation.")
         
         return chunk_files
 
     async def upload_chunk_to_drive(self, files, drive_saver):
         """Upload a chunk of files to Google Drive."""
+        if not files:  # Skip if no files to upload
+            return
+            
         try:
             drive_saver.save_files(files)
             print(f"Chunk of {len(files)} files uploaded successfully.")
@@ -74,7 +81,7 @@ class MainScraper:
                     print(f"Error deleting {file}: {e}")
         except Exception as e:
             print(f"Error uploading chunk to Drive: {e}")
-
+    
     async def scrape_and_create_excel(self):
         # Setup Google Drive
         try:
@@ -109,14 +116,14 @@ class MainScraper:
                 await asyncio.sleep(5)  # 5 seconds delay between chunks
 
         # Create master brand list
-        master_excel_name = "master_brand_list.xlsx"
-        brand_df = pd.DataFrame(self.brand_data)
-        brand_df.to_excel(master_excel_name, sheet_name="Brands", index=False)
+        # master_excel_name = "master_brand_list.xlsx"
+        # brand_df = pd.DataFrame(self.brand_data)
+        # brand_df.to_excel(master_excel_name, sheet_name="Brands", index=False)
         
         # Upload master list
-        drive_saver.save_files([master_excel_name])
-        os.remove(master_excel_name)
-        print(f"Master brand list uploaded to Drive.")
+        # drive_saver.save_files([master_excel_name])
+        # os.remove(master_excel_name)
+        # print(f"Master brand list uploaded to Drive.")
 
 
 if __name__ == "__main__":
