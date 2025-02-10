@@ -8,7 +8,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from datetime import datetime, timedelta
 from googleapiclient.errors import HttpError
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 class SavingOnDrive:
     def __init__(self, credentials_dict):
@@ -21,6 +20,8 @@ class SavingOnDrive:
         ]
         self.logger = logging.getLogger(__name__)
         self.setup_logging()
+        self.max_retries = 3
+        self.base_delay = 4  # Base delay in seconds
 
     def setup_logging(self):
         """Configure logging."""
@@ -46,84 +47,101 @@ class SavingOnDrive:
 
     def get_or_create_folder(self, folder_name, parent_folder_id):
         """Get or create folder in the specified parent folder."""
-        try:
-            # Check if folder exists
-            query = (f"name='{folder_name}' and "
-                    f"'{parent_folder_id}' in parents and "
-                    f"mimeType='application/vnd.google-apps.folder' and "
-                    f"trashed=false")
-            
-            results = self.service.files().list(
-                q=query,
-                spaces='drive',
-                fields='files(id, name)'
-            ).execute()
-            
-            files = results.get('files', [])
-            if files:
-                self.logger.info(f"Found existing folder '{folder_name}' in parent {parent_folder_id}")
-                return files[0]['id']
-            
-            # Create new folder
-            file_metadata = {
-                'name': folder_name,
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [parent_folder_id]
-            }
-            folder = self.service.files().create(
-                body=file_metadata,
-                fields='id'
-            ).execute()
-            
-            self.logger.info(f"Created new folder '{folder_name}' in parent {parent_folder_id}")
-            return folder.get('id')
-            
-        except HttpError as e:
-            if e.resp.status == 404:
-                self.logger.error(f"Parent folder not found (ID: {parent_folder_id})")
-                return None
-            self.logger.error(f"Error getting/creating folder: {e}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Error in get_or_create_folder: {e}")
-            raise
+        retry_count = 0
+        while retry_count < self.max_retries:
+            try:
+                # Check if folder exists
+                query = (f"name='{folder_name}' and "
+                        f"'{parent_folder_id}' in parents and "
+                        f"mimeType='application/vnd.google-apps.folder' and "
+                        f"trashed=false")
+                
+                results = self.service.files().list(
+                    q=query,
+                    spaces='drive',
+                    fields='files(id, name)'
+                ).execute()
+                
+                files = results.get('files', [])
+                if files:
+                    self.logger.info(f"Found existing folder '{folder_name}' in parent {parent_folder_id}")
+                    return files[0]['id']
+                
+                # Create new folder
+                file_metadata = {
+                    'name': folder_name,
+                    'mimeType': 'application/vnd.google-apps.folder',
+                    'parents': [parent_folder_id]
+                }
+                folder = self.service.files().create(
+                    body=file_metadata,
+                    fields='id'
+                ).execute()
+                
+                self.logger.info(f"Created new folder '{folder_name}' in parent {parent_folder_id}")
+                return folder.get('id')
+                
+            except HttpError as e:
+                if e.resp.status == 404:
+                    self.logger.error(f"Parent folder not found (ID: {parent_folder_id})")
+                    return None
+                retry_count += 1
+                if retry_count < self.max_retries:
+                    delay = self.base_delay * (2 ** retry_count)
+                    self.logger.info(f"Retrying folder creation after {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    self.logger.error(f"Failed to create/get folder after {self.max_retries} attempts")
+                    raise
+            except Exception as e:
+                self.logger.error(f"Error in get_or_create_folder: {e}")
+                raise
 
-    @retry(stop=stop_after_attempt(3),
-           wait=wait_exponential(multiplier=1, min=4, max=10))
     def upload_file(self, file_name, folder_id):
         """Upload a single file to Google Drive with retries."""
-        try:
-            if not os.path.exists(file_name):
-                self.logger.error(f"File not found: {file_name}")
-                return None
+        retry_count = 0
+        while retry_count < self.max_retries:
+            try:
+                if not os.path.exists(file_name):
+                    self.logger.error(f"File not found: {file_name}")
+                    return None
 
-            if not folder_id:
-                self.logger.error(f"Invalid folder ID for file {file_name}")
-                return None
+                if not folder_id:
+                    self.logger.error(f"Invalid folder ID for file {file_name}")
+                    return None
 
-            file_metadata = {
-                'name': os.path.basename(file_name),
-                'parents': [folder_id]
-            }
-            
-            media = MediaFileUpload(
-                file_name,
-                resumable=True,
-                chunksize=1024*1024  # 1MB chunks
-            )
-            
-            file = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            ).execute()
-            
-            self.logger.info(f"Successfully uploaded {file_name} to folder {folder_id}")
-            return file.get('id')
-            
-        except Exception as e:
-            self.logger.error(f"Error uploading file {file_name}: {str(e)}")
-            raise
+                file_metadata = {
+                    'name': os.path.basename(file_name),
+                    'parents': [folder_id]
+                }
+                
+                media = MediaFileUpload(
+                    file_name,
+                    resumable=True,
+                    chunksize=1024*1024  # 1MB chunks
+                )
+                
+                file = self.service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id'
+                ).execute()
+                
+                self.logger.info(f"Successfully uploaded {file_name} to folder {folder_id}")
+                return file.get('id')
+                
+            except (ssl.SSLEOFError, HttpError) as e:
+                retry_count += 1
+                if retry_count < self.max_retries:
+                    delay = self.base_delay * (2 ** retry_count)
+                    self.logger.info(f"Retrying upload after {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    self.logger.error(f"Failed to upload file after {self.max_retries} attempts")
+                    raise
+            except Exception as e:
+                self.logger.error(f"Error uploading file {file_name}: {str(e)}")
+                raise
 
     def save_files(self, files):
         """Save files to all valid Google Drive folders."""
@@ -138,19 +156,18 @@ class SavingOnDrive:
                 
                 for file_name in files:
                     retry_count = 0
-                    max_retries = 3
-                    
-                    while retry_count < max_retries:
+                    while retry_count < self.max_retries:
                         try:
                             self.upload_file(file_name, folder_id)
                             break
                         except Exception as e:
                             retry_count += 1
-                            if retry_count == max_retries:
-                                self.logger.error(f"Failed to upload {file_name} after {max_retries} attempts")
+                            if retry_count == self.max_retries:
+                                self.logger.error(f"Failed to upload {file_name} after {self.max_retries} attempts")
                             else:
-                                self.logger.info(f"Retrying upload of {file_name} (attempt {retry_count + 1})")
-                                time.sleep(2 ** retry_count)  # Exponential backoff
+                                delay = self.base_delay * (2 ** retry_count)
+                                self.logger.info(f"Retrying upload of {file_name} (attempt {retry_count + 1}) after {delay} seconds")
+                                time.sleep(delay)
             
             self.logger.info("Files upload process completed")
             
